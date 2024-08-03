@@ -6,8 +6,6 @@
 #include "chat.h"
 #include "renderer.h"
 
-
-
 #pragma intrinsic(_ReturnAddress)
 
 SafetyHookInline CPopulationAddToPopulation_{};
@@ -24,7 +22,6 @@ SafetyHookInline CGameShutdown_{};
 SafetyHookInline CPedIntelligenceProcess_{};
 SafetyHookInline CPopulationRemovePed_{};
 SafetyHookInline CPopulationManagePed_{};
-SafetyHookInline CPedSetMoveAnim_{};
 
 char __cdecl CPopulationAddToPopulation(float a1, float a2, float a3, float a4) {
 	return 0;
@@ -63,7 +60,8 @@ void __cdecl ReportCrime(int crime, CPed* victim, CPed* suspect) {
 }
 
 void __cdecl CGameShutdown() {
-	network::disconnect();
+	if (network::is_connected())
+		network::disconnect();
 	network::shutdown();
 
 	static auto path = get_documents_path();
@@ -127,14 +125,90 @@ DWORD __fastcall CPedIntelligenceProcess(CPedIntelligence* _this) {
 	return 0;
 }
 
-CTaskSimpleRunNamedAnim* __fastcall CPedSetMoveAnim(CTaskSimpleRunNamedAnim* _this, const char* pAnimName, const char* pAnimGroupName, int flags, float fBlendDelta,
-	int nTime, bool bDontInterrupt, bool bRunInSequence, bool bOffsetPed, bool bHoldLastFrame) {
+unsigned char ScanListMemory[8 * 20000];
 
-	printf("%s, %s\n", pAnimName, pAnimGroupName);
+DWORD dwPatchAddrScanReloc1USA[13] = {
+0x5DC7AA,0x41A85D,0x41A864,0x408259,0x711B32,0x699CF8,
+0x4092EC,0x408702,0x564220,0x564172,0x563845,
+0x84E9C2,0x85652D };
 
-	return CPedSetMoveAnim_.call<CTaskSimpleRunNamedAnim*>(_this, pAnimName, pAnimGroupName, flags, fBlendDelta, nTime, bDontInterrupt, bRunInSequence, bOffsetPed, bHoldLastFrame);
+DWORD dwPatchAddrScanReloc1EU[13] = {
+0x5DC7AA,0x41A85D,0x41A864,0x408261,0x711B32,0x699CF8,
+0x4092EC,0x408702,0x564220,0x564172,0x563845,
+0x84EA02,0x85656D };
+
+DWORD dwPatchAddrScanReloc2USA[56] = {
+0x0040D68C,0x005664D7,0x00566586,0x00408706,0x0056B3B1,0x0056AD91,0x0056A85F,0x005675FA,
+0x0056CD84,0x0056CC79,0x0056CB51,0x0056CA4A,0x0056C664,0x0056C569,0x0056C445,0x0056C341,
+0x0056BD46,0x0056BC53,0x0056BE56,0x0056A940,0x00567735,0x00546738,0x0054BB23,0x006E31AA,
+0x0040DC29,0x00534A09,0x00534D6B,0x00564B59,0x00564DA9,0x0067FF5D,0x00568CB9,0x00568EFB,
+0x00569F57,0x00569537,0x00569127,0x0056B4B5,0x0056B594,0x0056B2C3,0x0056AF74,0x0056AE95,
+0x0056BF4F,0x0056ACA3,0x0056A766,0x0056A685,0x0070B9BA,0x0056479D,0x0070ACB2,0x006063C7,
+0x00699CFE,0x0041A861,0x0040E061,0x0040DF5E,0x0040DDCE,0x0040DB0E,0x0040D98C,0x01566855 };
+
+DWORD dwPatchAddrScanReloc2EU[56] = {
+0x0040D68C,0x005664D7,0x00566586,0x00408706,0x0056B3B1,0x0056AD91,0x0056A85F,0x005675FA,
+0x0056CD84,0x0056CC79,0x0056CB51,0x0056CA4A,0x0056C664,0x0056C569,0x0056C445,0x0056C341,
+0x0056BD46,0x0056BC53,0x0056BE56,0x0056A940,0x00567735,0x00546738,0x0054BB23,0x006E31AA,
+0x0040DC29,0x00534A09,0x00534D6B,0x00564B59,0x00564DA9,0x0067FF5D,0x00568CB9,0x00568EFB,
+0x00569F57,0x00569537,0x00569127,0x0056B4B5,0x0056B594,0x0056B2C3,0x0056AF74,0x0056AE95,
+0x0056BF4F,0x0056ACA3,0x0056A766,0x0056A685,0x0070B9BA,0x0056479D,0x0070ACB2,0x006063C7,
+0x00699CFE,0x0041A861,0x0040E061,0x0040DF5E,0x0040DDCE,0x0040DB0E,0x0040D98C,0x01566845 };
+
+DWORD dwPatchAddrScanReloc3[11] = {
+0x004091C5,0x00409367,0x0040D9C5,0x0040DB47,0x0040DC61,0x0040DE07,0x0040DF97,
+0x0040E09A,0x00534A98,0x00534DFA,0x0071CDB0 };
+
+DWORD dwPatchAddrScanRelocEnd[4] = { 0x005634A6, 0x005638DF, 0x0056420F, 0x00564283 };
+
+
+//-----------------------------------------------------------
+
+void RelocateScanListHack() // patch pt limita de cplayerinfo in cworld::players (furat din samp)
+{
+	memset(&ScanListMemory[0], 0, sizeof(ScanListMemory));
+	unsigned char* aScanListMemory = &ScanListMemory[0];
+
+
+	int x = 0;
+	while (x != 13) {
+		if (plugin::IsGameVersion10us()) {
+			*reinterpret_cast<uint32_t*>(dwPatchAddrScanReloc1USA[x]) = (uint32_t)aScanListMemory;
+		}
+		else if (plugin::IsGameVersion10eu()) {
+			*reinterpret_cast<uint32_t*>(dwPatchAddrScanReloc1EU[x]) = (uint32_t)aScanListMemory;
+
+		}
+		x++;
+	}
+
+	x = 0;
+	while (x != 56) {
+		if (plugin::IsGameVersion10us()) {
+			*(PDWORD)(dwPatchAddrScanReloc2USA[x] + 3) = (DWORD)aScanListMemory;
+		}
+		else if (plugin::IsGameVersion10eu()) {
+			*(PDWORD)(dwPatchAddrScanReloc2EU[x] + 3) = (DWORD)aScanListMemory;
+		}
+		x++;
+	}
+
+	x = 0;
+	while (x != 11) {
+		*(PDWORD)(dwPatchAddrScanReloc3[x] + 3) = (DWORD)(aScanListMemory + 4);
+		x++;
+	}
+
+	x = 0;
+	while (x != 4) {
+		*(PDWORD)(dwPatchAddrScanRelocEnd[x]) = (DWORD)(aScanListMemory + sizeof(ScanListMemory));
+		x++;
+	}
+
+	*(PDWORD)0x40936A = (DWORD)(aScanListMemory + 4);
+
+	memset((BYTE*)0xB7D0B8, 0, 8 * 14400);
 }
-
 
 void game::init()
 {
@@ -152,7 +226,6 @@ void game::init()
 	CPedIntelligenceProcess_ = safetyhook::create_inline(reinterpret_cast<void*>(0x608260), reinterpret_cast<void*>(&CPedIntelligenceProcess));
 	CPopulationRemovePed_ = safetyhook::create_inline(reinterpret_cast<void*>(0x610F20), reinterpret_cast<void*>(&CPopulationRemovePed));
 	CPopulationManagePed_ = safetyhook::create_inline(reinterpret_cast<void*>(0x611FC0), reinterpret_cast<void*>(&CPopulationManagePed));
-	//CPedSetMoveAnim_ = safetyhook::create_inline(reinterpret_cast<void*>(0x61A990), reinterpret_cast<void*>(&CPedSetMoveAnim));
 
 	plugin::patch::Nop(0x704E8A, 5); // DrawBlur
 	plugin::patch::Nop(0x72DEC0, 5); // updateWantedLevel
@@ -180,11 +253,15 @@ void game::init()
 	plugin::patch::Nop(0x58FC45, 5); // CHud::DrawVitalStats
 	plugin::patch::Nop(0x5E91A4, 5); // CPedIntelligence::ProcessFirst
 	plugin::patch::Nop(0x6162DE, 5); // CPopulation::ManagePed
-	//plugin::patch::Nop(0x60F2E7, 5); // CPlayerPed::ProcessAnimGroups
-	//plugin::patch::Nop(0x616299, 5); // CPopulation::ManageDummy
-	//plugin::patch::Nop(0x616173, 5); // CPopulation::ManageDummy
-	//plugin::patch::Nop(0x616693, 5); // CPopulation::ManagePopulation
 	
+	plugin::patch::Nop(0x609C08, 39);
+	plugin::patch::Nop(0x5E63A6, 19);
+	plugin::patch::Nop(0x621AEA, 12);
+	plugin::patch::Nop(0x62D331, 11);
+	plugin::patch::Nop(0x741FFF, 27);
+	plugin::patch::Nop(0x60F2C4, 25);
+	*(PBYTE)0x60D64E = 0x84;
+
 	plugin::patch::RedirectShortJump(0x58FC2C, (void*)0x58FC4C);
 
 
@@ -200,10 +277,7 @@ void game::init()
 	};
 
 	plugin::Events::gameProcessEvent += []() {
-		//network::update();
-
 		
-
 		*reinterpret_cast<byte*>(0x6194A0) = (renderer::show || !network::is_connected() || chat::toggled) ? 0xC3 : 0xE9; // NOP RsMouseSetPos
 		*reinterpret_cast<byte*>(0x53F3C0) = (renderer::show || !network::is_connected() || chat::toggled) ? 0xC3 : 0x83; // NOP UpdateMouse
 
